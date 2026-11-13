@@ -1,0 +1,103 @@
+# CI for this repository: lints every workflow, validates the Renovate
+# presets, and runs each reusable workflow against the fixtures in testdata/
+# so a change that breaks a workflow fails here before any caller sees it.
+name: Self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Run actionlint
+        env:
+          # renovate: datasource=github-releases depName=rhysd/actionlint
+          ACTIONLINT_VERSION: v1.7.12
+        run: |
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  renovate-config:
+    name: Renovate config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+
+      - name: Validate presets
+        env:
+          # renovate: datasource=npm depName=renovate
+          RENOVATE_VERSION: 44.238.0
+        run: |
+          npx -y --package "renovate@${RENOVATE_VERSION}" -- \
+            renovate-config-validator --strict --no-global default.json automerge-dev.json renovate.json
+
+  go-ci:
+    name: go-ci (race)
+    uses: ./.github/workflows/go-ci.yml
+    with:
+      working-directory: testdata/go
+      test-flags: -count=1
+      extra-test-command: go test -count=1 -run TestHello -v ./...
+
+  go-ci-postgres:
+    name: go-ci (postgres)
+    uses: ./.github/workflows/go-ci.yml
+    with:
+      working-directory: testdata/go
+      run-race: false
+      services-postgres: true
+      extra-test-command: go test -count=1 -run TestPostgresReachable -v ./...
+
+  node-ci:
+    name: node-ci
+    uses: ./.github/workflows/node-ci.yml
+    with:
+      working-directory: testdata/node
+      node-version-file: .nvmrc
+      install-playwright: true
+      test-command: npm test && npm run test:browser
+
+  monthly-audit:
+    name: monthly-audit (dry run)
+    uses: ./.github/workflows/monthly-audit.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      go: true
+      go-working-directory: testdata/go
+      node-directories: testdata/node
+      dry-run: true

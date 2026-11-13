@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Opt-in: automerge minor and patch updates of npm devDependencies and GitHub Actions once CI passes. Extend after github>jotadrilo/ci.",
+  "platformAutomerge": false,
+  "packageRules": [
+    {
+      "description": "devDependencies get their own group so the group can automerge.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "devDependencies (non-major)",
+      "groupSlug": "dev-dependencies-minor-patch",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "GitHub Actions get their own group so the group can automerge.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "GitHub Actions (non-major)",
+      "groupSlug": "github-actions-minor-patch",
+      "automerge": true,
+      "automergeType": "pr"
+    }
+  ]
+}

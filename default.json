@@ -1,0 +1,56 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared Renovate preset for jotadrilo projects: weekly grouped minor and patch updates, separate majors, security fixes at any time, GitHub Actions pinned to digests.",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Europe/Madrid",
+  "schedule": ["before 8am on monday"],
+  "dependencyDashboard": { "enabled": true },
+  "automerge": false,
+  "separateMajorMinor": true,
+  "rangeStrategy": "auto",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 8am on the first day of the month"]
+  },
+  "packageRules": [
+    {
+      "description": "One PR per repository for every minor, patch and digest update.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "Majors stay in their own PR, one per dependency.",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "labels": ["major"]
+    },
+    {
+      "description": "Keep go.sum tidy after every Go module update.",
+      "matchManagers": ["gomod"],
+      "postUpdateOptions": ["gomodTidy"]
+    },
+    {
+      "description": "Applications: move package.json ranges along with the lockfile.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies", "devDependencies"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Peer dependencies widen so consumers are not forced to upgrade.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["peerDependencies"],
+      "rangeStrategy": "widen"
+    }
+  ]
+}

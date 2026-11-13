@@ -1,0 +1,241 @@
+# Reusable Go CI: build, vet, test (optionally with -race and a Postgres
+# service), golangci-lint and govulncheck.
+#
+# Minimal caller (.github/workflows/ci.yml in your repo):
+#
+#   name: CI
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#   permissions:
+#     contents: read
+#   jobs:
+#     go:
+#       uses: jotadrilo/ci/.github/workflows/go-ci.yml@v1
+#
+# golangci-lint must be built with a Go at least as new as the `go` line in
+# go.mod, or it refuses to load the packages. Bump golangci-lint-version
+# together with a Go upgrade.
+name: Go CI
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory that holds go.mod, relative to the repository root.
+        type: string
+        default: .
+      go-version-file:
+        description: File to read the Go version from, relative to working-directory.
+        type: string
+        default: go.mod
+      go-version:
+        description: Explicit Go version (e.g. 1.26.x). Overrides go-version-file when set.
+        type: string
+        default: ""
+      go-latest-patch:
+        description: >-
+          With a go.mod version file, install the latest patch of its Go minor
+          (go 1.26.0 -> 1.26.x) so CI and govulncheck see current stdlib fixes.
+        type: boolean
+        default: true
+      run-race:
+        description: Run go test with -race.
+        type: boolean
+        default: true
+      test-flags:
+        description: Extra flags for go test (e.g. -count=1 -timeout=10m).
+        type: string
+        default: ""
+      extra-test-command:
+        description: Optional shell command run after go test (e.g. make test-postgres).
+        type: string
+        default: ""
+      services-postgres:
+        description: Start a Postgres service container and export DATABASE_URL to the tests.
+        type: boolean
+        default: false
+      postgres-image:
+        description: Image for the Postgres service.
+        type: string
+        default: postgres:16-alpine
+      golangci-lint-version:
+        description: golangci-lint version. Must understand the Go version in go.mod.
+        type: string
+        # renovate: datasource=github-releases depName=golangci/golangci-lint
+        default: v2.15.0
+      govulncheck-version:
+        description: golang.org/x/vuln/cmd/govulncheck version.
+        type: string
+        # renovate: datasource=go depName=golang.org/x/vuln
+        default: v1.9.0
+      run-lint:
+        description: Run golangci-lint.
+        type: boolean
+        default: true
+      run-govulncheck:
+        description: Run govulncheck.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: go-ci-test-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.services-postgres }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    services:
+      postgres:
+        # An empty image skips the service, so it only starts when asked for.
+        image: ${{ inputs.services-postgres && inputs.postgres-image || '' }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: ${{ inputs.services-postgres && 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' || '' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve Go version
+        id: go
+        env:
+          GO_VERSION: ${{ inputs.go-version }}
+          GO_VERSION_FILE: ${{ inputs.go-version-file }}
+          LATEST_PATCH: ${{ inputs.go-latest-patch }}
+          WORKDIR: ${{ inputs.working-directory }}
+        run: |
+          if [[ -n "$GO_VERSION" ]]; then
+            echo "version=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          elif [[ "$LATEST_PATCH" == "true" && "$(basename "$GO_VERSION_FILE")" == "go.mod" ]]; then
+            v=$(awk '$1 == "go" { print $2; exit }' "$GO_VERSION_FILE")
+            if [[ -z "$v" ]]; then echo "::error::no go directive in $GO_VERSION_FILE"; exit 1; fi
+            minor=$(cut -d. -f1,2 <<<"$v")
+            echo "Go $v in $GO_VERSION_FILE -> installing latest $minor.x"
+            echo "version=$minor.x" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=$WORKDIR/$GO_VERSION_FILE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          go-version-file: ${{ steps.go.outputs.file }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        env:
+          RACE: ${{ inputs.run-race }}
+          TEST_FLAGS: ${{ inputs.test-flags }}
+        run: |
+          args=()
+          if [[ "$RACE" == "true" ]]; then args+=(-race); fi
+          # shellcheck disable=SC2206 # word splitting of the flags is intended
+          args+=($TEST_FLAGS)
+          go test "${args[@]}" ./...
+
+      - name: Extra tests
+        if: inputs.extra-test-command != ''
+        env:
+          EXTRA_TEST_COMMAND: ${{ inputs.extra-test-command }}
+        run: eval "$EXTRA_TEST_COMMAND"
+
+  lint:
+    name: Lint and vulnerabilities
+    if: inputs.run-lint || inputs.run-govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: go-ci-lint-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.services-postgres }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve Go version
+        id: go
+        env:
+          GO_VERSION: ${{ inputs.go-version }}
+          GO_VERSION_FILE: ${{ inputs.go-version-file }}
+          LATEST_PATCH: ${{ inputs.go-latest-patch }}
+          WORKDIR: ${{ inputs.working-directory }}
+        run: |
+          if [[ -n "$GO_VERSION" ]]; then
+            echo "version=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          elif [[ "$LATEST_PATCH" == "true" && "$(basename "$GO_VERSION_FILE")" == "go.mod" ]]; then
+            v=$(awk '$1 == "go" { print $2; exit }' "$GO_VERSION_FILE")
+            if [[ -z "$v" ]]; then echo "::error::no go directive in $GO_VERSION_FILE"; exit 1; fi
+            minor=$(cut -d. -f1,2 <<<"$v")
+            echo "Go $v in $GO_VERSION_FILE -> installing latest $minor.x"
+            echo "version=$minor.x" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=$WORKDIR/$GO_VERSION_FILE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          go-version-file: ${{ steps.go.outputs.file }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: golangci-lint
+        if: inputs.run-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ inputs.golangci-lint-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Cache govulncheck
+        if: inputs.run-govulncheck
+        id: govulncheck-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin/govulncheck
+          key: govulncheck-${{ runner.os }}-${{ inputs.govulncheck-version }}-go${{ steps.setup-go.outputs.go-version }}
+
+      - name: govulncheck
+        if: inputs.run-govulncheck
+        env:
+          GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
+          CACHE_HIT: ${{ steps.govulncheck-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$CACHE_HIT" != "true" ]]; then
+            go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          fi
+          "$(go env GOPATH)/bin/govulncheck" ./...

@@ -1,0 +1,263 @@
+# Reusable monthly dependency audit. Runs govulncheck and
+# `npm audit --omit=dev`, lists outdated direct dependencies
+# (`go list -u -m` and `npm outdated`), and keeps one issue per month,
+# "Monthly dependency audit — YYYY-MM", with the summary (vulnerabilities
+# first). When a month comes back clean, no issue is opened for it and the
+# earlier months' audit issues are closed.
+#
+# Minimal caller (.github/workflows/monthly-audit.yml in your repo):
+#
+#   name: Monthly dependency audit
+#   on:
+#     schedule:
+#       - cron: "0 6 1 * *"
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#     issues: write
+#   jobs:
+#     audit:
+#       uses: jotadrilo/ci/.github/workflows/monthly-audit.yml@v1
+#       with:
+#         go: true
+#         node-directories: web
+#
+# The caller must grant `issues: write`; the issue is written with the
+# caller's GITHUB_TOKEN.
+name: Monthly dependency audit
+
+on:
+  workflow_call:
+    inputs:
+      go:
+        description: Audit the Go module in go-working-directory.
+        type: boolean
+        default: true
+      go-working-directory:
+        description: Directory that holds go.mod.
+        type: string
+        default: .
+      govulncheck-version:
+        description: golang.org/x/vuln/cmd/govulncheck version.
+        type: string
+        # renovate: datasource=go depName=golang.org/x/vuln
+        default: v1.9.0
+      node-directories:
+        description: Directories with a package-lock.json to audit, separated by spaces, commas or newlines. Empty skips npm.
+        type: string
+        default: ""
+      node-version:
+        description: Node version for the npm audit.
+        type: string
+        default: lts/*
+      dry-run:
+        description: Write the report to the job summary only; do not touch issues.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: monthly-audit-${{ github.repository }}-${{ inputs.dry-run }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve Go version
+        if: inputs.go
+        id: go
+        env:
+          GO_MOD: ${{ inputs.go-working-directory }}/go.mod
+        run: |
+          v=$(awk '$1 == "go" { print $2; exit }' "$GO_MOD")
+          if [[ -z "$v" ]]; then echo "::error::no go directive in $GO_MOD"; exit 1; fi
+          echo "version=$(cut -d. -f1,2 <<<"$v").x" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        if: inputs.go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache-dependency-path: ${{ inputs.go-working-directory }}/go.sum
+
+      - name: Set up Node
+        if: inputs.node-directories != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Audit
+        id: audit
+        env:
+          AUDIT_GO: ${{ inputs.go }}
+          GO_DIR: ${{ inputs.go-working-directory }}
+          GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
+          NODE_DIRS: ${{ inputs.node-directories }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/audit"
+          mkdir -p "$out"
+          vulns="$out/vulns.md"
+          outdated="$out/outdated.md"
+          : > "$vulns"
+          : > "$outdated"
+          vuln_count=0
+          outdated_count=0
+          root="$PWD"
+
+          if [[ "$AUDIT_GO" == "true" ]]; then
+            cd "$root/$GO_DIR"
+            go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+            rc=0
+            "$(go env GOPATH)/bin/govulncheck" -format json ./... > "$out/govulncheck.json" || rc=$?
+            if [[ $rc -ne 0 && $rc -ne 3 ]]; then
+              { echo "### Go (\`$GO_DIR\`)"; echo; echo "govulncheck failed with exit code $rc; see the [run]($RUN_URL)."; echo; } >> "$vulns"
+              vuln_count=$((vuln_count + 1))
+            else
+              # Called vulnerabilities only: the ones govulncheck fails on.
+              jq -rs '
+                (map(select(.osv)) | map({key: .osv.id, value: (.osv.summary // "")}) | from_entries) as $summary
+                | map(select(.finding and .finding.trace[0].function) | .finding)
+                | group_by(.osv)
+                | map(.[0])
+                | .[]
+                | "- **[\(.osv)](https://pkg.go.dev/vuln/\(.osv))** \($summary[.osv]) `\(.trace[0].module)@\(.trace[0].version // "stdlib")`, fixed in `\(.fixed_version // "no fix yet")`."
+              ' "$out/govulncheck.json" > "$out/go-vulns.md"
+              n=$(grep -c '^- ' "$out/go-vulns.md" || true)
+              if [[ $n -gt 0 ]]; then
+                { echo "### Go (\`$GO_DIR\`)"; echo; cat "$out/go-vulns.md"; echo; } >> "$vulns"
+                vuln_count=$((vuln_count + n))
+              fi
+            fi
+
+            go list -u -m -json all \
+              | jq -rs 'map(select((.Main | not) and (.Indirect | not) and .Update)) | .[] | "| `\(.Path)` | \(.Version) | \(.Update.Version) |"' \
+              > "$out/go-outdated.md"
+            n=$(grep -c '^| ' "$out/go-outdated.md" || true)
+            if [[ $n -gt 0 ]]; then
+              { echo "### Go (\`$GO_DIR\`)"; echo; echo "| Module | Current | Latest |"; echo "| --- | --- | --- |"; cat "$out/go-outdated.md"; echo; } >> "$outdated"
+              outdated_count=$((outdated_count + n))
+            fi
+          fi
+
+          for dir in $(tr ',' ' ' <<<"$NODE_DIRS"); do
+            cd "$root/$dir"
+            npm ci --ignore-scripts --no-audit --no-fund > /dev/null
+            npm audit --omit=dev --json > "$out/npm-audit.json" || true
+            jq -r '
+              {"critical": 0, "high": 1, "moderate": 2, "low": 3, "info": 4} as $rank
+              | (.vulnerabilities // {}) | to_entries
+              | sort_by($rank[.value.severity] // 9)
+              | .[]
+              | "- **\(.key)** (\(.value.severity)) `\(.value.range)`"
+                + ([.value.via[] | objects | "[\(.title)](\(.url))"] | if length > 0 then ": " + join(", ") else ", via " + ([.value.via[] | strings] | join(", ")) end)
+                + (if .value.fixAvailable then ". Fix available." else ". No fix yet." end)
+            ' "$out/npm-audit.json" > "$out/npm-vulns.md"
+            n=$(grep -c '^- ' "$out/npm-vulns.md" || true)
+            if [[ $n -gt 0 ]]; then
+              { echo "### npm (\`$dir\`)"; echo; cat "$out/npm-vulns.md"; echo; } >> "$vulns"
+              vuln_count=$((vuln_count + n))
+            fi
+
+            npm outdated --json > "$out/npm-outdated.json" || true
+            jq -r 'to_entries[] | "| `\(.key)` | \(.value.current // "-") | \(.value.wanted // "-") | \(.value.latest // "-") |"' \
+              "$out/npm-outdated.json" > "$out/npm-outdated.md"
+            n=$(grep -c '^| ' "$out/npm-outdated.md" || true)
+            if [[ $n -gt 0 ]]; then
+              { echo "### npm (\`$dir\`)"; echo; echo "| Package | Current | Wanted | Latest |"; echo "| --- | --- | --- | --- |"; cat "$out/npm-outdated.md"; echo; } >> "$outdated"
+              outdated_count=$((outdated_count + n))
+            fi
+          done
+          cd "$root"
+
+          month=$(date -u +%Y-%m)
+          report="$out/report.md"
+          {
+            echo "Dependency audit for **$month**, from [this run]($RUN_URL)."
+            echo
+            echo "## Vulnerabilities ($vuln_count)"
+            echo
+            if [[ -s "$vulns" ]]; then cat "$vulns"; else echo "None found."; echo; fi
+            echo "## Outdated direct dependencies ($outdated_count)"
+            echo
+            if [[ -s "$outdated" ]]; then cat "$outdated"; else echo "Everything is current."; echo; fi
+          } > "$report"
+          # Issue bodies are capped at 65536 characters.
+          if [[ $(wc -c < "$report") -gt 60000 ]]; then
+            head -c 60000 "$report" > "$report.tmp"
+            printf '\n\n_Truncated; the full report is in the run summary._\n' >> "$report.tmp"
+            cp "$report" "$out/report-full.md"
+            mv "$report.tmp" "$report"
+          fi
+          cat "${out}/report-full.md" 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+          findings=false
+          if [[ $((vuln_count + outdated_count)) -gt 0 ]]; then findings=true; fi
+          {
+            echo "month=$month"
+            echo "report=$report"
+            echo "findings=$findings"
+            echo "vulnerabilities=$vuln_count"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the audit issue
+        if: ${{ !inputs.dry-run }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          MONTH: ${{ steps.audit.outputs.month }}
+          REPORT: ${{ steps.audit.outputs.report }}
+          FINDINGS: ${{ steps.audit.outputs.findings }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const prefix = 'Monthly dependency audit — ';
+            const title = prefix + process.env.MONTH;
+            const body = fs.readFileSync(process.env.REPORT, 'utf8');
+            const findings = process.env.FINDINGS === 'true';
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'all', per_page: 100,
+            });
+            const audits = issues.filter((i) => !i.pull_request && i.title.startsWith(prefix));
+            const current = audits.find((i) => i.title === title);
+            const previous = audits.filter((i) => i.title !== title && i.state === 'open');
+
+            if (findings) {
+              if (current) {
+                await github.rest.issues.update({ owner, repo, issue_number: current.number, body, state: 'open' });
+                core.notice(`Updated #${current.number}`);
+              } else {
+                const { data } = await github.rest.issues.create({ owner, repo, title, body });
+                core.notice(`Opened #${data.number}`);
+              }
+              return;
+            }
+
+            if (current && current.state === 'open') {
+              await github.rest.issues.update({ owner, repo, issue_number: current.number, body, state: 'closed', state_reason: 'completed' });
+              core.notice(`Closed #${current.number}: nothing left to report`);
+            }
+            for (const issue of previous) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `The ${process.env.MONTH} audit found nothing to report, so this one is closed.`,
+              });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+              core.notice(`Closed #${issue.number}`);
+            }
+            if (!current && previous.length === 0) core.notice('Nothing to report; no issue opened.');

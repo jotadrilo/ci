@@ -1,0 +1,136 @@
+# Reusable Node CI: npm ci, npm audit of production dependencies, optional
+# Playwright Chromium, then lint, test and build.
+#
+# Minimal caller (.github/workflows/ci.yml in your repo):
+#
+#   name: CI
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#   permissions:
+#     contents: read
+#   jobs:
+#     web:
+#       uses: jotadrilo/ci/.github/workflows/node-ci.yml@v1
+#       with:
+#         working-directory: web
+#
+# Set any of lint-command, test-command or build-command to "" to skip it.
+name: Node CI
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory that holds package.json and package-lock.json.
+        type: string
+        default: .
+      node-version-file:
+        description: File to read the Node version from (e.g. .nvmrc), relative to working-directory. Wins over node-version.
+        type: string
+        default: ""
+      node-version:
+        description: Node version used when node-version-file is empty.
+        type: string
+        default: lts/*
+      install-playwright:
+        description: Install Playwright's Chromium (and its system dependencies), with a browser cache.
+        type: boolean
+        default: false
+      lint-command:
+        description: Lint command; empty skips it.
+        type: string
+        default: npm run lint
+      test-command:
+        description: Test command; empty skips it.
+        type: string
+        default: npm test
+      build-command:
+        description: Build command; empty skips it.
+        type: string
+        default: npm run build
+      audit-level:
+        description: Minimum severity that fails npm audit (low, moderate, high, critical); empty skips the audit.
+        type: string
+        default: high
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: node-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
+          node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        if: inputs.audit-level != ''
+        env:
+          AUDIT_LEVEL: ${{ inputs.audit-level }}
+        run: npm audit --omit=dev --audit-level="$AUDIT_LEVEL"
+
+      - name: Read Playwright version
+        if: inputs.install-playwright
+        id: playwright
+        run: |
+          version=$(npx --no-install playwright --version | awk '{ print $2 }')
+          if [[ -z "$version" ]]; then echo "::error::playwright is not installed in ${PWD}"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: inputs.install-playwright
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+
+      - name: Install Playwright Chromium
+        if: inputs.install-playwright && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        if: inputs.install-playwright && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx --no-install playwright install-deps chromium
+
+      - name: Lint
+        if: inputs.lint-command != ''
+        env:
+          CMD: ${{ inputs.lint-command }}
+        run: eval "$CMD"
+
+      - name: Test
+        if: inputs.test-command != ''
+        env:
+          CMD: ${{ inputs.test-command }}
+        run: eval "$CMD"
+
+      - name: Build
+        if: inputs.build-command != ''
+        env:
+          CMD: ${{ inputs.build-command }}
+        run: eval "$CMD"

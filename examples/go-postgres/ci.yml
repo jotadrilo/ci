@@ -1,0 +1,26 @@
+# A Go service whose repository tests need Postgres (the flora layout): the
+# tests read DATABASE_URL and skip when it is unset, so the service container
+# is all they need. A web/ app is checked by node-ci as well.
+# Copy to .github/workflows/ci.yml in the project.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    uses: jotadrilo/ci/.github/workflows/go-ci.yml@v1
+    with:
+      services-postgres: true
+      postgres-image: postgres:16-alpine
+      test-flags: -count=1
+
+  web:
+    uses: jotadrilo/ci/.github/workflows/node-ci.yml@v1
+    with:
+      working-directory: web

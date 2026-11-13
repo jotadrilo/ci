@@ -1,0 +1,22 @@
+# Go at the repository root, a Vite/React app in web/ with Vitest browser
+# tests on Playwright (the unpixel-web layout).
+# Copy to .github/workflows/ci.yml in the project.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    uses: jotadrilo/ci/.github/workflows/go-ci.yml@v1
+
+  web:
+    uses: jotadrilo/ci/.github/workflows/node-ci.yml@v1
+    with:
+      working-directory: web
+      install-playwright: true

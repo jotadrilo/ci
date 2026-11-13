@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>jotadrilo/ci", "local>jotadrilo/ci:automerge-dev"],
+  "customManagers": [
+    {
+      "description": "Tool versions in workflow files marked with a `# renovate:` comment on the line above.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*[\\w-]+:\\s*[\"']?(?<currentValue>v?[\\w.+-]+)[\"']?"
+      ]
+    }
+  ]
+}
