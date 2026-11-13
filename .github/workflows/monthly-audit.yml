@@ -1,6 +1,6 @@
-# Reusable monthly dependency audit. Runs govulncheck and
-# `npm audit --omit=dev`, lists outdated direct dependencies
-# (`go list -u -m` and `npm outdated`), and keeps one issue per month,
+# Reusable monthly dependency audit. Runs govulncheck, `npm audit --omit=dev`
+# and pip-audit, lists outdated direct dependencies (`go list -u -m`,
+# `npm outdated` and `uv tree --outdated`), and keeps one issue per month,
 # "Monthly dependency audit — YYYY-MM", with the summary (vulnerabilities
 # first). When a month comes back clean, no issue is opened for it and the
 # earlier months' audit issues are closed.
@@ -21,6 +21,12 @@
 #       with:
 #         go: true
 #         node-directories: web
+#
+# A Python project with a uv.lock, and no Go:
+#
+#       with:
+#         go: false
+#         python: true
 #
 # The caller must grant `issues: write`; the issue is written with the
 # caller's GITHUB_TOKEN.
@@ -50,6 +56,28 @@ on:
         description: Node version for the npm audit.
         type: string
         default: lts/*
+      python:
+        description: Audit the Python project (pyproject.toml and uv.lock) in python-working-directory.
+        type: boolean
+        default: false
+      python-working-directory:
+        description: Directory that holds pyproject.toml and uv.lock.
+        type: string
+        default: .
+      python-version:
+        description: Python version whose locked dependencies are audited (uv.lock can pick different versions per Python).
+        type: string
+        default: "3.13"
+      uv-version:
+        description: uv version.
+        type: string
+        # renovate: datasource=pypi depName=uv
+        default: 0.13.5
+      pip-audit-version:
+        description: pip-audit version.
+        type: string
+        # renovate: datasource=pypi depName=pip-audit
+        default: 2.10.1
       dry-run:
         description: Write the report to the job summary only; do not touch issues.
         type: boolean
@@ -101,9 +129,23 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
 
+      - name: Set up uv
+        if: inputs.python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          enable-cache: true
+          cache-dependency-glob: ${{ inputs.python-working-directory }}/uv.lock
+          cache-suffix: audit
+
       - name: Audit
         id: audit
         env:
+          AUDIT_PYTHON: ${{ inputs.python }}
+          PY_DIR: ${{ inputs.python-working-directory }}
+          UV_PYTHON: ${{ inputs.python-version }}
+          UV_NO_PROGRESS: "1"
+          PIP_AUDIT_VERSION: ${{ inputs.pip-audit-version }}
           AUDIT_GO: ${{ inputs.go }}
           GO_DIR: ${{ inputs.go-working-directory }}
           GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
@@ -184,6 +226,49 @@ jobs:
               outdated_count=$((outdated_count + n))
             fi
           done
+          cd "$root"
+
+          if [[ "$AUDIT_PYTHON" == "true" ]]; then
+            cd "$root/$PY_DIR"
+            if [[ ! -f uv.lock ]]; then echo "::error::python is on but there is no uv.lock in $PY_DIR"; exit 1; fi
+            # Runtime dependencies as locked, for UV_PYTHON.
+            uv export --frozen --no-dev --no-emit-project --format requirements-txt --quiet > "$out/py-requirements.txt"
+            rc=0
+            if grep -q '^[A-Za-z0-9]' "$out/py-requirements.txt"; then
+              uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+                --requirement "$out/py-requirements.txt" --require-hashes --disable-pip \
+                --progress-spinner off --desc on --format json --output "$out/pip-audit.json" || rc=$?
+            else
+              echo '{"dependencies": []}' > "$out/pip-audit.json"
+            fi
+            if [[ ! -s "$out/pip-audit.json" ]]; then
+              { echo "### Python (\`$PY_DIR\`)"; echo; echo "pip-audit failed with exit code $rc; see the [run]($RUN_URL)."; echo; } >> "$vulns"
+              vuln_count=$((vuln_count + 1))
+            else
+              jq -r '
+                .dependencies[] | select((.vulns // []) | length > 0) | . as $d | .vulns[]
+                | "- **[\(.id)](https://osv.dev/vulnerability/\(.id))** `\($d.name)@\($d.version)`, fixed in "
+                  + (if ((.fix_versions // []) | length) > 0 then "`" + (.fix_versions | join("`, `")) + "`" else "no fix yet" end)
+                  + (if ((.aliases // []) | length) > 0 then " (" + (.aliases | join(", ")) + ")" else "" end) + "."
+              ' "$out/pip-audit.json" > "$out/py-vulns.md"
+              n=$(grep -c '^- ' "$out/py-vulns.md" || true)
+              if [[ $n -gt 0 ]]; then
+                { echo "### Python (\`$PY_DIR\`)"; echo; cat "$out/py-vulns.md"; echo; } >> "$vulns"
+                vuln_count=$((vuln_count + n))
+              fi
+            fi
+
+            # Direct dependencies, extras included; uv tree marks the outdated ones "(latest: vX)".
+            uv tree --frozen --outdated --depth 1 --no-dev > "$out/py-tree.txt"
+            # shellcheck disable=SC2016 # The backticks are Markdown.
+            sed -nE 's/^[^A-Za-z0-9]*([A-Za-z0-9._-]+) v([^ ]+).*\(latest: v([^)]+)\).*$/| `\1` | \2 | \3 |/p' \
+              "$out/py-tree.txt" > "$out/py-outdated.md"
+            n=$(grep -c '^| ' "$out/py-outdated.md" || true)
+            if [[ $n -gt 0 ]]; then
+              { echo "### Python (\`$PY_DIR\`, Python $UV_PYTHON)"; echo; echo "| Package | Locked | Latest |"; echo "| --- | --- | --- |"; cat "$out/py-outdated.md"; echo; } >> "$outdated"
+              outdated_count=$((outdated_count + n))
+            fi
+          fi
           cd "$root"
 
           month=$(date -u +%Y-%m)

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "greet"
+version = "0.1.0"
+description = "Fixture for the self-test of python-ci.yml and monthly-audit.yml."
+requires-python = ">=3.10"
+dependencies = ["packaging>=24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/greet"]
