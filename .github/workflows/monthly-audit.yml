@@ -291,6 +291,7 @@ jobs:
             mv "$report.tmp" "$report"
           fi
           cat "${out}/report-full.md" 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          cat "$report"
 
           findings=false
           if [[ $((vuln_count + outdated_count)) -gt 0 ]]; then findings=true; fi

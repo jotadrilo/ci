@@ -1,4 +1,5 @@
-# Reusable Python CI with uv: install (from uv.lock by default), test on each
+# Reusable Python CI with uv: optional apt packages, install (from uv.lock by
+# default), test on each
 # Python version, pip-audit the runtime dependencies, and build the sdist and
 # wheel.
 #
@@ -37,6 +38,12 @@ on:
         description: Install the versions in uv.lock (uv sync --locked). False resolves the newest allowed versions instead.
         type: boolean
         default: true
+      apt-packages:
+        description: >-
+          Space-separated Ubuntu packages to apt-get install before the
+          dependencies (e.g. librsvg2-bin for rsvg-convert); empty installs none.
+        type: string
+        default: ""
       sync-args:
         description: Extra arguments for uv sync, e.g. --extra test or --all-groups.
         type: string
@@ -101,6 +108,14 @@ jobs:
             ${{ inputs.working-directory }}/uv.lock
             ${{ inputs.working-directory }}/pyproject.toml
           cache-suffix: py${{ matrix.python }}-lock-${{ inputs.use-lock }}
+
+      - name: Install system packages
+        if: inputs.apt-packages != ''
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          # shellcheck disable=SC2086 # word splitting of the package list is intended
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends $APT_PACKAGES
 
       - name: Install dependencies
         env:

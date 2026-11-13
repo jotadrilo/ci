@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: node-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
+      group: node-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.install-playwright }}-${{ inputs.apt-packages }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     defaults:
       run:

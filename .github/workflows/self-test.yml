@@ -114,7 +114,8 @@ jobs:
       working-directory: testdata/python
       python-versions: '["3.13"]'
       use-lock: false
-      test-command: pytest -v -k hello
+      test-command: pytest -v -k hello && rsvg-convert --version
+      apt-packages: librsvg2-bin
       run-build: false
 
   monthly-audit:

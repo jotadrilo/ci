@@ -140,8 +140,8 @@ jobs:
 
 ### python-ci.yml
 
-With [uv](https://docs.astral.sh/uv/), one job per Python version:
-`uv sync --locked` (the versions in `uv.lock`), the tests with the project's
+With [uv](https://docs.astral.sh/uv/), one job per Python version: optional
+apt packages, `uv sync --locked` (the versions in `uv.lock`), the tests with the project's
 `.venv` on `PATH`, [pip-audit](https://pypi.org/project/pip-audit/) on the
 runtime dependencies that job installed (hashes required), and `uv build` of
 the sdist and the wheel. uv's cache is keyed on `uv.lock` and `pyproject.toml`.
@@ -161,6 +161,7 @@ jobs:
 | `python-versions` | `["3.10", "3.13"]` | JSON list; one job each, `fail-fast` off. |
 | `working-directory` | `.` | Directory with `pyproject.toml` and `uv.lock`. |
 | `use-lock` | `true` | `uv sync --locked`, which also fails when `uv.lock` is out of date with `pyproject.toml`. `false` runs `uv sync --upgrade`: the newest versions the ranges allow, to check the ranges still hold. |
+| `apt-packages` | `""` | Space-separated Ubuntu packages installed before `uv sync`, e.g. `librsvg2-bin` for tests that call `rsvg-convert`. |
 | `sync-args` | `--all-extras` | Extra `uv sync` arguments, e.g. `--extra test` or `--all-groups`. Dependency groups named `dev` are installed by uv anyway. |
 | `test-command` | `pytest` | Empty skips. |
 | `run-audit` | `true` | pip-audit of `uv export --no-dev --no-emit-project`, the runtime dependencies; extras and dev groups are left out, like `npm audit --omit=dev`. |
