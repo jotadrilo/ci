@@ -1,0 +1,18 @@
+# A Python package with pyproject.toml and uv.lock at the repository root,
+# tested on its oldest and newest supported Python (the unpixel layout).
+# Copy to .github/workflows/ci.yml in the project.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    uses: jotadrilo/ci/.github/workflows/python-ci.yml@v1
+    with:
+      python-versions: '["3.10", "3.13"]'

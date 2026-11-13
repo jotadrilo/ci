@@ -4,8 +4,8 @@ Shared CI for jotadrilo's projects:
 
 - a [Renovate](https://docs.renovatebot.com/) preset, `default.json`, plus an
   opt-in automerge preset, `automerge-dev.json`;
-- three reusable GitHub Actions workflows in `.github/workflows/`:
-  `go-ci.yml`, `node-ci.yml` and `monthly-audit.yml`.
+- four reusable GitHub Actions workflows in `.github/workflows/`:
+  `go-ci.yml`, `node-ci.yml`, `python-ci.yml` and `monthly-audit.yml`.
 
 Every third-party action is pinned to a full commit SHA with its version in a
 comment, every workflow asks for the least permissions it needs, and
@@ -138,10 +138,44 @@ jobs:
 | `build-command` | `npm run build` | Empty skips. |
 | `audit-level` | `high` | `low`, `moderate`, `high` or `critical`; empty skips. |
 
+### python-ci.yml
+
+With [uv](https://docs.astral.sh/uv/), one job per Python version:
+`uv sync --locked` (the versions in `uv.lock`), the tests with the project's
+`.venv` on `PATH`, [pip-audit](https://pypi.org/project/pip-audit/) on the
+runtime dependencies that job installed (hashes required), and `uv build` of
+the sdist and the wheel. uv's cache is keyed on `uv.lock` and `pyproject.toml`.
+The project needs a `pyproject.toml`, and a `uv.lock` unless `use-lock` is
+off.
+
+```yaml
+jobs:
+  python:
+    uses: jotadrilo/ci/.github/workflows/python-ci.yml@v1
+    with:
+      python-versions: '["3.10", "3.13"]'
+```
+
+| Input | Default | |
+| --- | --- | --- |
+| `python-versions` | `["3.10", "3.13"]` | JSON list; one job each, `fail-fast` off. |
+| `working-directory` | `.` | Directory with `pyproject.toml` and `uv.lock`. |
+| `use-lock` | `true` | `uv sync --locked`, which also fails when `uv.lock` is out of date with `pyproject.toml`. `false` runs `uv sync --upgrade`: the newest versions the ranges allow, to check the ranges still hold. |
+| `sync-args` | `--all-extras` | Extra `uv sync` arguments, e.g. `--extra test` or `--all-groups`. Dependency groups named `dev` are installed by uv anyway. |
+| `test-command` | `pytest` | Empty skips. |
+| `run-audit` | `true` | pip-audit of `uv export --no-dev --no-emit-project`, the runtime dependencies; extras and dev groups are left out, like `npm audit --omit=dev`. |
+| `run-build` | `true` | `uv build`. |
+| `uv-version` | `0.13.5` | |
+| `pip-audit-version` | `2.10.1` | |
+
+`uv.lock` can pick different versions for different Pythons, so each job
+audits what it installed.
+
 ### monthly-audit.yml
 
-Runs govulncheck and `npm audit --omit=dev`, lists outdated direct
-dependencies (`go list -u -m -json all`, `npm outdated --json`), and keeps one
+Runs govulncheck, `npm audit --omit=dev` and pip-audit, lists outdated direct
+dependencies (`go list -u -m -json all`, `npm outdated --json`,
+`uv tree --outdated --depth 1`), and keeps one
 issue per month titled `Monthly dependency audit — YYYY-MM`, vulnerabilities
 first. A second run in the same month updates that issue. When a month comes
 back clean, no issue is opened, and the open audit issues of earlier months
@@ -171,7 +205,14 @@ jobs:
 | `govulncheck-version` | `v1.9.0` | |
 | `node-directories` | `""` | Space, comma or newline separated; empty skips npm. |
 | `node-version` | `lts/*` | |
+| `python` | `false` | Audit the Python project: pip-audit of the runtime dependencies locked in `uv.lock`, and its outdated direct dependencies, extras included. |
+| `python-working-directory` | `.` | Directory with `pyproject.toml` and `uv.lock`. |
+| `python-version` | `3.13` | The Python whose locked versions are audited. |
+| `uv-version` | `0.13.5` | |
+| `pip-audit-version` | `2.10.1` | |
 | `dry-run` | `false` | Summary only; issues untouched. |
+
+A Python project with no Go sets `go: false` and `python: true`.
 
 The caller must grant `issues: write`; the issue is written with the caller's
 `GITHUB_TOKEN`.
@@ -183,7 +224,9 @@ The caller must grant `issues: write`; the issue is written with the caller's
 - `examples/go-web/`: Go at the root and a web app in `web/` with Playwright
   browser tests (the unpixel-web layout);
 - `examples/go-postgres/`: a Go service whose tests need Postgres, plus its
-  `web/` app (the flora layout).
+  `web/` app (the flora layout);
+- `examples/python-lib/`: a Python package with `uv.lock` at the root (the
+  unpixel layout).
 
 Each has `ci.yml`, `monthly-audit.yml` and `renovate.json`.
 
@@ -207,7 +250,7 @@ object, so the two tags never nest.
 
 This repository's own `renovate.json` extends its presets and has a regex
 manager for the tool versions marked with `# renovate:` comments
-(golangci-lint, govulncheck, actionlint, renovate), so the defaults stay
+(golangci-lint, govulncheck, actionlint, renovate, uv, pip-audit), so the defaults stay
 current too.
 
 ## Notes for private repositories

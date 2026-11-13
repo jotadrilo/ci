@@ -101,6 +101,22 @@ jobs:
       test-command: rsvg-convert --version
       build-command: ""
 
+  python-ci:
+    name: python-ci (lock)
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: testdata/python
+
+  python-ci-latest:
+    name: python-ci (newest versions)
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: testdata/python
+      python-versions: '["3.13"]'
+      use-lock: false
+      test-command: pytest -v -k hello
+      run-build: false
+
   monthly-audit:
     name: monthly-audit (dry run)
     uses: ./.github/workflows/monthly-audit.yml
@@ -111,4 +127,6 @@ jobs:
       go: true
       go-working-directory: testdata/go
       node-directories: testdata/node
+      python: true
+      python-working-directory: testdata/python
       dry-run: true

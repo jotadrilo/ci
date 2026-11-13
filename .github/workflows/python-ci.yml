@@ -1,0 +1,143 @@
+# Reusable Python CI with uv: install (from uv.lock by default), test on each
+# Python version, pip-audit the runtime dependencies, and build the sdist and
+# wheel.
+#
+# Minimal caller (.github/workflows/ci.yml in your repo):
+#
+#   name: CI
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#   permissions:
+#     contents: read
+#   jobs:
+#     python:
+#       uses: jotadrilo/ci/.github/workflows/python-ci.yml@v1
+#
+# The project needs a pyproject.toml. With use-lock (the default) it also
+# needs a uv.lock, and `uv sync --locked` fails when the lock is out of date
+# with pyproject.toml. With use-lock: false the lock is ignored and every
+# dependency resolves to its newest allowed version, which shows whether the
+# ranges in pyproject.toml still hold.
+name: Python CI
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: JSON list of Python versions to test on, one job each.
+        type: string
+        default: '["3.10", "3.13"]'
+      working-directory:
+        description: Directory that holds pyproject.toml (and uv.lock), relative to the repository root.
+        type: string
+        default: .
+      use-lock:
+        description: Install the versions in uv.lock (uv sync --locked). False resolves the newest allowed versions instead.
+        type: boolean
+        default: true
+      sync-args:
+        description: Extra arguments for uv sync, e.g. --extra test or --all-groups.
+        type: string
+        default: --all-extras
+      test-command:
+        description: Test command, run with the project's .venv on PATH; empty skips it.
+        type: string
+        default: pytest
+      run-audit:
+        description: Run pip-audit on the runtime dependencies (no dev groups, no extras) installed for each Python version.
+        type: boolean
+        default: true
+      run-build:
+        description: Build the sdist and the wheel with uv build.
+        type: boolean
+        default: true
+      uv-version:
+        description: uv version.
+        type: string
+        # renovate: datasource=pypi depName=uv
+        default: 0.13.5
+      pip-audit-version:
+        description: pip-audit version.
+        type: string
+        # renovate: datasource=pypi depName=pip-audit
+        default: 2.10.1
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Test on Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(inputs.python-versions) }}
+    concurrency:
+      group: python-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.use-lock }}-${{ matrix.python }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      UV_NO_PROGRESS: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          enable-cache: true
+          cache-dependency-glob: |
+            ${{ inputs.working-directory }}/uv.lock
+            ${{ inputs.working-directory }}/pyproject.toml
+          cache-suffix: py${{ matrix.python }}-lock-${{ inputs.use-lock }}
+
+      - name: Install dependencies
+        env:
+          USE_LOCK: ${{ inputs.use-lock }}
+          SYNC_ARGS: ${{ inputs.sync-args }}
+        run: |
+          if [[ "$USE_LOCK" == "true" ]]; then
+            if [[ ! -f uv.lock ]]; then echo "::error::use-lock is on but there is no uv.lock in ${PWD}"; exit 1; fi
+            mode=(--locked)
+          else
+            mode=(--upgrade)
+          fi
+          # shellcheck disable=SC2086 # SYNC_ARGS holds several arguments.
+          uv sync "${mode[@]}" $SYNC_ARGS
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          uv pip list
+
+      - name: Test
+        if: inputs.test-command != ''
+        env:
+          CMD: ${{ inputs.test-command }}
+        run: eval "$CMD"
+
+      - name: Audit runtime dependencies
+        if: inputs.run-audit
+        env:
+          PIP_AUDIT_VERSION: ${{ inputs.pip-audit-version }}
+        run: |
+          # The versions this job installed, with hashes; pip-audit keeps the ones whose markers match this Python.
+          req="$RUNNER_TEMP/requirements-audit.txt"
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --quiet > "$req"
+          if ! grep -q '^[A-Za-z0-9]' "$req"; then echo "No runtime dependencies to audit."; exit 0; fi
+          uvx --from "pip-audit==${PIP_AUDIT_VERSION}" pip-audit \
+            --requirement "$req" --require-hashes --disable-pip --progress-spinner off --desc on
+
+      - name: Build sdist and wheel
+        if: inputs.run-build
+        run: |
+          uv build --out-dir "$RUNNER_TEMP/dist"
+          ls -l "$RUNNER_TEMP/dist"
