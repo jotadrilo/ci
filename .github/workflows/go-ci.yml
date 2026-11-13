@@ -133,6 +133,8 @@ jobs:
             minor=$(cut -d. -f1,2 <<<"$v")
             echo "Go $v in $GO_VERSION_FILE -> installing latest $minor.x"
             echo "version=$minor.x" >> "$GITHUB_OUTPUT"
+            # The runner's tool cache can lag a patch behind; ask for the newest.
+            echo "check-latest=true" >> "$GITHUB_OUTPUT"
           else
             echo "file=$WORKDIR/$GO_VERSION_FILE" >> "$GITHUB_OUTPUT"
           fi
@@ -143,6 +145,7 @@ jobs:
         with:
           go-version: ${{ steps.go.outputs.version }}
           go-version-file: ${{ steps.go.outputs.file }}
+          check-latest: ${{ steps.go.outputs.check-latest == 'true' }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
       - name: Build
@@ -202,6 +205,8 @@ jobs:
             minor=$(cut -d. -f1,2 <<<"$v")
             echo "Go $v in $GO_VERSION_FILE -> installing latest $minor.x"
             echo "version=$minor.x" >> "$GITHUB_OUTPUT"
+            # The runner's tool cache can lag a patch behind; ask for the newest.
+            echo "check-latest=true" >> "$GITHUB_OUTPUT"
           else
             echo "file=$WORKDIR/$GO_VERSION_FILE" >> "$GITHUB_OUTPUT"
           fi
@@ -212,6 +217,7 @@ jobs:
         with:
           go-version: ${{ steps.go.outputs.version }}
           go-version-file: ${{ steps.go.outputs.file }}
+          check-latest: ${{ steps.go.outputs.check-latest == 'true' }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
       - name: golangci-lint

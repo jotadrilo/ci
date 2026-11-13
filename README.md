@@ -86,7 +86,7 @@ jobs:
 | `working-directory` | `.` | Directory with `go.mod`. |
 | `go-version-file` | `go.mod` | Relative to `working-directory`. |
 | `go-version` | `""` | Explicit version; overrides the file. |
-| `go-latest-patch` | `true` | With `go.mod`, installs the latest patch of its minor (`go 1.26.0` runs on `1.26.x`) so govulncheck sees current stdlib fixes. |
+| `go-latest-patch` | `true` | With `go.mod`, installs the latest patch of its minor (`go 1.26.0` runs on `1.26.x`, with `check-latest`, so a runner image a patch behind does not fall short of the `go` line) so govulncheck sees current stdlib fixes. |
 | `run-race` | `true` | `go test -race`. |
 | `test-flags` | `""` | Extra `go test` flags, e.g. `-count=1`. |
 | `extra-test-command` | `""` | Shell command after `go test`, e.g. `make test-postgres`. |
@@ -114,8 +114,8 @@ jobs:
 
 ### node-ci.yml
 
-`npm ci`, `npm audit --omit=dev`, optional Playwright Chromium (browsers cached
-by Playwright version), then lint, test and build.
+Optional apt packages, `npm ci`, `npm audit --omit=dev`, optional Playwright
+Chromium (browsers cached by Playwright version), then lint, test and build.
 
 ```yaml
 jobs:
@@ -132,6 +132,7 @@ jobs:
 | `node-version-file` | `""` | e.g. `.nvmrc`, relative to `working-directory`; wins over `node-version`. |
 | `node-version` | `lts/*` | |
 | `install-playwright` | `false` | `playwright` must be a dependency of the project. |
+| `apt-packages` | `""` | Space-separated Ubuntu packages installed before `npm ci`, e.g. `librsvg2-bin` for tests that call `rsvg-convert`. |
 | `lint-command` | `npm run lint` | Empty skips. |
 | `test-command` | `npm test` | Empty skips. |
 | `build-command` | `npm run build` | Empty skips. |

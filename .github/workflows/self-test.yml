@@ -90,6 +90,17 @@ jobs:
       install-playwright: true
       test-command: npm test && npm run test:browser
 
+  node-ci-apt:
+    name: node-ci (apt packages)
+    uses: ./.github/workflows/node-ci.yml
+    with:
+      working-directory: testdata/node
+      node-version-file: .nvmrc
+      apt-packages: librsvg2-bin
+      lint-command: ""
+      test-command: rsvg-convert --version
+      build-command: ""
+
   monthly-audit:
     name: monthly-audit (dry run)
     uses: ./.github/workflows/monthly-audit.yml

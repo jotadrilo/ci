@@ -91,6 +91,8 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ steps.go.outputs.version }}
+          # The runner's tool cache can lag a patch behind; ask for the newest.
+          check-latest: true
           cache-dependency-path: ${{ inputs.go-working-directory }}/go.sum
 
       - name: Set up Node

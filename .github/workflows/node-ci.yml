@@ -1,5 +1,5 @@
-# Reusable Node CI: npm ci, npm audit of production dependencies, optional
-# Playwright Chromium, then lint, test and build.
+# Reusable Node CI: optional apt packages, npm ci, npm audit of production
+# dependencies, optional Playwright Chromium, then lint, test and build.
 #
 # Minimal caller (.github/workflows/ci.yml in your repo):
 #
@@ -38,6 +38,12 @@ on:
         description: Install Playwright's Chromium (and its system dependencies), with a browser cache.
         type: boolean
         default: false
+      apt-packages:
+        description: >-
+          Space-separated Ubuntu packages to apt-get install before the
+          dependencies (e.g. librsvg2-bin for rsvg-convert); empty installs none.
+        type: string
+        default: ""
       lint-command:
         description: Lint command; empty skips it.
         type: string
@@ -83,6 +89,14 @@ jobs:
           node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
           cache: npm
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install system packages
+        if: inputs.apt-packages != ''
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          # shellcheck disable=SC2086 # word splitting of the package list is intended
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends $APT_PACKAGES
 
       - name: Install dependencies
         run: npm ci
