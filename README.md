@@ -196,10 +196,13 @@ To release, with `main` green:
 
 ```sh
 git tag -a v1.2.3 -m "v1.2.3"
-git tag -fa v1 -m "v1 -> v1.2.3" v1.2.3
+git tag -fa v1 -m "v1 -> v1.2.3" "v1.2.3^{commit}"
 git push origin v1.2.3
 git push --force origin v1
 ```
+
+`^{commit}` makes `v1` point at the commit rather than at the `v1.2.3` tag
+object, so the two tags never nest.
 
 This repository's own `renovate.json` extends its presets and has a regex
 manager for the tool versions marked with `# renovate:` comments
