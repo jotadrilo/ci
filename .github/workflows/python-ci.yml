@@ -64,7 +64,7 @@ on:
         description: uv version.
         type: string
         # renovate: datasource=pypi depName=uv
-        default: 0.13.5
+        default: 0.13.9
       pip-audit-version:
         description: pip-audit version.
         type: string

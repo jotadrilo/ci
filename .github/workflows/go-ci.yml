@@ -69,7 +69,7 @@ on:
         description: golang.org/x/vuln/cmd/govulncheck version.
         type: string
         # renovate: datasource=go depName=golang.org/x/vuln
-        default: v1.9.0
+        default: v1.10.0
       run-lint:
         description: Run golangci-lint.
         type: boolean

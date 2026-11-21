@@ -59,7 +59,7 @@ jobs:
       - name: Validate presets
         env:
           # renovate: datasource=npm depName=renovate
-          RENOVATE_VERSION: 44.238.0
+          RENOVATE_VERSION: 44.257.8
         run: |
           npx -y --package "renovate@${RENOVATE_VERSION}" -- \
             renovate-config-validator --strict --no-global default.json automerge-dev.json renovate.json
