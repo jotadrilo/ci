@@ -47,7 +47,7 @@ on:
         description: golang.org/x/vuln/cmd/govulncheck version.
         type: string
         # renovate: datasource=go depName=golang.org/x/vuln
-        default: v1.9.0
+        default: v1.10.0
       node-directories:
         description: Directories with a package-lock.json to audit, separated by spaces, commas or newlines. Empty skips npm.
         type: string
@@ -72,7 +72,7 @@ on:
         description: uv version.
         type: string
         # renovate: datasource=pypi depName=uv
-        default: 0.13.5
+        default: 0.13.10
       pip-audit-version:
         description: pip-audit version.
         type: string
